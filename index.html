@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo Viewer - OneDrive test 2</title>
+<style>
+  :root {
+    --bg: #f5f4f0; --panel: #ffffff; --text: #1d1d1b; --muted: #6a6a64;
+    --line: #d9d7d0; --accent: #1f5f8b; --accent-text: #ffffff; --bad: #a3271f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614; --panel: #22221f; --text: #ecebe6; --muted: #a3a29b;
+      --line: #3a3a35; --accent: #7fb6dc; --accent-text: #10202b; --bad: #f08c84;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; }
+  p { margin: 8px 0; }
+  .muted { color: var(--muted); font-size: 0.9rem; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 16px; margin: 16px 0;
+  }
+  label { display: block; font-weight: 600; margin-top: 12px; }
+  input[type=text] {
+    width: 100%; padding: 10px; margin-top: 4px; font: inherit;
+    color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 6px;
+  }
+  code {
+    display: inline-block; padding: 2px 6px; border-radius: 4px;
+    background: var(--bg); border: 1px solid var(--line);
+    font: 0.9rem ui-monospace, Consolas, monospace; overflow-wrap: anywhere;
+  }
+  button {
+    font: inherit; padding: 10px 16px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  #error { color: var(--bad); font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #crumbs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 12px 0 4px; }
+  #crumbs button { padding: 6px 10px; }
+  #crumbs span { color: var(--muted); }
+  #folders { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+  #folders button { text-align: left; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
+  #grid button {
+    padding: 0; border: 0; background: var(--line); border-radius: 4px;
+    aspect-ratio: 1; overflow: hidden; position: relative;
+  }
+  #grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #grid .tag {
+    position: absolute; left: 4px; bottom: 4px; padding: 0 6px; border-radius: 4px;
+    background: rgba(0,0,0,0.65); color: #fff; font-size: 0.75rem;
+  }
+  #results { white-space: pre-wrap; overflow-wrap: anywhere; font: 0.85rem/1.5 ui-monospace, Consolas, monospace; margin: 0; }
+  #viewer {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.92); color: #fff;
+    display: flex; flex-direction: column; z-index: 10;
+  }
+  #viewer[hidden] { display: none; }
+  #viewer .bar { display: flex; gap: 12px; align-items: center; padding: 10px 12px; }
+  #viewer .bar div { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 0.9rem; }
+  #viewer .pic { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+  #viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Photo Viewer - OneDrive test 2</h1>
+  <p class="muted">Test page 2 (speed tests). It signs in to OneDrive with read-only permission and shows folders and pictures. It cannot change or delete anything.</p>
+  <p id="error" role="alert"></p>
+
+  <section id="setup" class="panel" hidden>
+    <p><strong>Redirect URI to enter in the Microsoft registration</strong> (type: Single-page application):</p>
+    <p><code id="redirect"></code></p>
+    <label for="clientId">Application (client) ID from the registration</label>
+    <input type="text" id="clientId" autocomplete="off" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+    <div class="row"><button class="primary" id="signIn">Sign in to OneDrive</button></div>
+  </section>
+
+  <section id="browser" hidden>
+    <div class="row">
+      <button id="signOut">Sign out</button>
+      <button class="primary" id="runTests">Run speed tests on this folder</button>
+      <button id="showPics" hidden>Show pictures</button>
+      <span class="muted" id="status"></span>
+    </div>
+    <section id="resultsPanel" class="panel" hidden>
+      <div class="row" style="margin-top:0"><strong>Speed test results</strong><button id="copyResults">Copy results</button></div>
+      <pre id="results"></pre>
+    </section>
+    <nav id="crumbs" aria-label="Folder path"></nav>
+    <div id="folders"></div>
+    <div id="grid"></div>
+  </section>
+</main>
+
+<div id="viewer" hidden>
+  <div class="bar"><div id="viewerText"></div><button id="viewerClose">Close</button></div>
+  <div class="pic"><img id="viewerImg" alt=""></div>
+</div>
+
+<script>
+"use strict";
+// Sign-in uses Microsoft's standard "authorization code with PKCE" flow for
+// single-page apps. /consumers = personal Microsoft accounts.
+const LOGIN = "https://login.microsoftonline.com/consumers/oauth2/v2.0";
+const GRAPH = "https://graph.microsoft.com/v1.0/me/drive";
+const SCOPE = "Files.Read";                      // read-only access to files
+const REDIRECT = location.origin + location.pathname;
+const START_FOLDER = "Pictures";
+
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(area, key) { try { return area.getItem(key); } catch (e) { return null; } },
+  set(area, key, value) { try { area.setItem(key, value); } catch (e) { /* storage off */ } },
+  del(area, key) { try { area.removeItem(key); } catch (e) { /* storage off */ } },
+};
+
+function showError(text) { $("error").textContent = text || ""; }
+
+function randomText(bytes) {
+  const a = new Uint8Array(bytes);
+  crypto.getRandomValues(a);
+  return base64url(a);
+}
+function base64url(bytes) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// ---------- sign-in ----------
+async function signIn() {
+  showError("");
+  const clientId = $("clientId").value.trim();
+  if (!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(clientId)) {
+    showError("Paste the Application (client) ID first. It looks like 8-4-4-4-12 letters and digits.");
+    return;
+  }
+  if (!window.crypto || !crypto.subtle) {
+    showError("This page must be opened from http://localhost or an https address, not as a file.");
+    return;
+  }
+  store.set(localStorage, "pv_client", clientId);
+  const verifier = randomText(48);
+  const state = randomText(16);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  store.set(sessionStorage, "pv_verifier", verifier);
+  store.set(sessionStorage, "pv_state", state);
+  const q = new URLSearchParams({
+    client_id: clientId, response_type: "code", redirect_uri: REDIRECT,
+    response_mode: "fragment", scope: SCOPE, state: state,
+    code_challenge: base64url(new Uint8Array(digest)), code_challenge_method: "S256",
+    prompt: "select_account",
+  });
+  location.assign(LOGIN + "/authorize?" + q);
+}
+
+// Called when Microsoft sends the browser back here after sign-in.
+async function finishSignIn(params) {
+  history.replaceState(null, "", REDIRECT);
+  if (params.get("error")) {
+    throw new Error("Microsoft sign-in said: " + params.get("error") + "\n" + (params.get("error_description") || ""));
+  }
+  if (params.get("state") !== store.get(sessionStorage, "pv_state")) {
+    throw new Error("Sign-in reply did not match this page's request. Please try again.");
+  }
+  const body = new URLSearchParams({
+    client_id: store.get(localStorage, "pv_client") || "", grant_type: "authorization_code",
+    code: params.get("code"), redirect_uri: REDIRECT,
+    code_verifier: store.get(sessionStorage, "pv_verifier") || "", scope: SCOPE,
+  });
+  let reply;
+  try {
+    reply = await fetch(LOGIN + "/token", { method: "POST", body: body });
+  } catch (e) {
+    throw new Error("Could not reach Microsoft to finish sign-in. Check that the redirect URI was added " +
+      "under the platform 'Single-page application' (not 'Web').");
+  }
+  const data = await reply.json();
+  if (!reply.ok) {
+    throw new Error("Microsoft sign-in said: " + data.error + "\n" + (data.error_description || ""));
+  }
+  store.del(sessionStorage, "pv_verifier");
+  store.del(sessionStorage, "pv_state");
+  store.set(sessionStorage, "pv_token", data.access_token);
+  store.set(sessionStorage, "pv_expires", String(Date.now() + (data.expires_in - 60) * 1000));
+}
+
+function token() {
+  const t = store.get(sessionStorage, "pv_token");
+  const until = Number(store.get(sessionStorage, "pv_expires") || 0);
+  return t && Date.now() < until ? t : null;
+}
+
+function signOut() {
+  store.del(sessionStorage, "pv_token");
+  store.del(sessionStorage, "pv_expires");
+  showSetup();
+}
+
+// ---------- OneDrive ----------
+async function graph(url) {
+  const t = token();
+  if (!t) { showSetup(); throw new Error("The sign-in has run out (it lasts about an hour). Please sign in again."); }
+  const reply = await fetch(url, { headers: { Authorization: "Bearer " + t } });
+  if (reply.status === 401) { signOut(); throw new Error("OneDrive did not accept the sign-in. Please sign in again."); }
+  const data = await reply.json();
+  if (!reply.ok) {
+    const err = new Error("OneDrive said: " + (data.error ? data.error.code + " - " + data.error.message : reply.status));
+    err.status = reply.status;
+    throw err;
+  }
+  return data;
+}
+
+// crumbs: list of { name, url } from the top of OneDrive down to the open folder.
+let crumbs = [];
+let loadNumber = 0;
+
+async function openFolder(newCrumbs) {
+  const mine = ++loadNumber;
+  crumbs = newCrumbs;
+  store.set(localStorage, "pv_folder", JSON.stringify(crumbs));
+  showError("");
+  drawCrumbs();
+  $("folders").replaceChildren();
+  $("grid").replaceChildren();
+  $("showPics").hidden = true;
+  $("status").textContent = "Loading...";
+  const started = performance.now();
+  let url = crumbs[crumbs.length - 1].url + "?$expand=thumbnails&$top=200";
+  const items = [];
+  try {
+    while (url) {
+      const page = await graph(url);
+      if (mine !== loadNumber) return;
+      items.push(...page.value);
+      url = page["@odata.nextLink"];
+    }
+  } catch (e) {
+    if (mine === loadNumber) { $("status").textContent = ""; showError(e.message); }
+    throw e;
+  }
+  const listMs = Math.round(performance.now() - started);
+  items.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const folders = items.filter((i) => i.folder);
+  const pictures = items.filter((i) => i.file && i.thumbnails && i.thumbnails.length);
+  const others = items.length - folders.length - pictures.length;
+
+  for (const f of folders) {
+    const b = document.createElement("button");
+    b.textContent = f.name + "  (" + f.folder.childCount + ")";
+    b.addEventListener("click", () =>
+      openFolder(crumbs.concat({ name: f.name, url: GRAPH + "/items/" + f.id + "/children" })).catch(() => {}));
+    $("folders").append(b);
+  }
+
+  let loaded = 0;
+  let shown = false;
+  const summary = () => {
+    $("status").textContent = folders.length + " folders, " + pictures.length + " pictures" +
+      (others ? ", " + others + " other" : "") + ". List took " + listMs + " ms." +
+      (shown ? " Small pictures shown: " + loaded + " of " + pictures.length : "");
+  };
+  // The grid is drawn only on request, so that the speed tests are not
+  // flattered by pictures the browser has already fetched.
+  $("showPics").hidden = !pictures.length;
+  $("showPics").onclick = () => {
+    $("showPics").hidden = true;
+    shown = true;
+    for (const p of pictures) {
+      const b = document.createElement("button");
+      b.title = p.name;
+      const img = document.createElement("img");
+      img.alt = p.name;
+      img.addEventListener("load", () => { loaded++; if (mine === loadNumber) summary(); });
+      img.src = p.thumbnails[0].medium.url;
+      b.append(img);
+      if (p.video) {
+        const tag = document.createElement("span");
+        tag.className = "tag"; tag.textContent = "video";
+        b.append(tag);
+      }
+      b.addEventListener("click", () => openPicture(p));
+      $("grid").append(b);
+    }
+    summary();
+  };
+  summary();
+}
+
+function drawCrumbs() {
+  const nav = $("crumbs");
+  nav.replaceChildren();
+  crumbs.forEach((c, i) => {
+    if (i) { const s = document.createElement("span"); s.textContent = "›"; nav.append(s); }
+    const b = document.createElement("button");
+    b.textContent = c.name;
+    b.disabled = i === crumbs.length - 1;
+    b.addEventListener("click", () => openFolder(crumbs.slice(0, i + 1)).catch(() => {}));
+    nav.append(b);
+  });
+}
+
+function openPicture(p) {
+  const img = $("viewerImg");
+  const text = $("viewerText");
+  const kb = Math.round(p.size / 1024);
+  const started = performance.now();
+  img.onload = () => {
+    text.textContent = p.name + " - " + img.naturalWidth + " x " + img.naturalHeight + ", " + kb +
+      " KB, shown in " + Math.round(performance.now() - started) + " ms";
+  };
+  img.onerror = () => { text.textContent = p.name + " - could not be shown"; };
+  text.textContent = p.name + " - loading...";
+  img.alt = p.name;
+  // A video has no picture to show full size, so show its large preview instead.
+  img.src = p.video ? p.thumbnails[0].large.url : p["@microsoft.graph.downloadUrl"];
+  $("viewer").hidden = false;
+}
+function closePicture() {
+  $("viewer").hidden = true;
+  $("viewerImg").removeAttribute("src");
+}
+
+// ---------- speed tests ----------
+const out = [];
+function say(line) { out.push(line); $("results").textContent = out.join("\n"); }
+const ms = (t) => Math.round(performance.now() - t) + " ms";
+
+async function timed(label, work) {
+  const t = performance.now();
+  try {
+    const note = await work();
+    say(label + ": " + ms(t) + (note ? "  (" + note + ")" : ""));
+    return true;
+  } catch (e) {
+    say(label + ": FAILED after " + ms(t) + " - " + String(e.message).slice(0, 200));
+    return false;
+  }
+}
+
+async function listAll(query) {
+  let url = crumbs[crumbs.length - 1].url + query;
+  const items = [];
+  let pages = 0;
+  while (url) {
+    const page = await graph(url);
+    items.push(...page.value);
+    pages++;
+    url = page["@odata.nextLink"];
+  }
+  items.pages = pages;
+  return items;
+}
+
+function loadImages(urls) {
+  return Promise.all(urls.map((u) => new Promise((done, fail) => {
+    const i = new Image();
+    i.onload = done;
+    i.onerror = () => fail(new Error("a picture did not load"));
+    i.src = u;
+  })));
+}
+
+async function batch(paths) {
+  const reply = await fetch("https://graph.microsoft.com/v1.0/$batch", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token(), "Content-Type": "application/json" },
+    body: JSON.stringify({ requests: paths.map((p, i) => ({ id: String(i), method: "GET", url: p })) }),
+  });
+  const data = await reply.json();
+  if (!reply.ok) throw new Error(data.error ? data.error.code + " - " + data.error.message : "status " + reply.status);
+  const bad = data.responses.filter((r) => r.status !== 200);
+  if (bad.length) throw new Error(bad.length + " of " + paths.length + " failed, first status " + bad[0].status);
+  return data.responses.map((r) => r.body.url);
+}
+
+async function authBlob(url) {
+  const reply = await fetch(url, { headers: { Authorization: "Bearer " + token() } });
+  if (!reply.ok) throw new Error("status " + reply.status);
+  return (await reply.blob()).size;
+}
+
+async function runTests() {
+  if (crumbs.length < 2) { showError("Open an album folder first."); return; }
+  $("runTests").disabled = true;
+  $("resultsPanel").hidden = false;
+  out.length = 0;
+  const folder = crumbs.slice(1).map((c) => c.name).join("/");
+  const byPath = "/me/drive/root:/" + crumbs.slice(1).map((c) => encodeURIComponent(c.name)).join("/") + "/";
+  say("Folder: " + folder);
+  say("When: " + new Date().toLocaleString() + "  Browser: " + navigator.userAgent.replace(/^.*?\) /, ""));
+  say("");
+  say("A. Listing the folder");
+  let names = [];
+  await timed("A1 names only, 200 per request", async () => {
+    const items = await listAll("?$select=id,name,size,file&$top=200");
+    names = items.filter((i) => i.file && /\.(jpe?g|png|gif|heic)$/i.test(i.name)).map((i) => i.name);
+    return items.length + " items, " + names.length + " pictures, " + items.pages + " requests";
+  });
+  await timed("A2 names only, 1000 per request", async () => {
+    const items = await listAll("?$select=id,name,size,file&$top=1000");
+    return items.length + " items, " + items.pages + " requests";
+  });
+  let urls = [];
+  await timed("A3 with small pictures (as test 1)", async () => {
+    const items = await listAll("?$expand=thumbnails&$top=200");
+    urls = items.filter((i) => i.thumbnails && i.thumbnails.length).map((i) => i.thumbnails[0].medium.url);
+    return items.length + " items, " + items.pages + " requests";
+  });
+  await timed("A4 with small pictures, repeated", async () => {
+    const items = await listAll("?$expand=thumbnails&$top=200");
+    return items.length + " items";
+  });
+  let urls300 = [];
+  await timed("A5 with 300px square pictures only", async () => {
+    const items = await listAll("?$select=id,name&$expand=thumbnails($select=c300x300_crop)&$top=200");
+    urls300 = items.filter((i) => i.thumbnails && i.thumbnails.length && i.thumbnails[0].c300x300_crop)
+      .map((i) => i.thumbnails[0].c300x300_crop.url);
+    if (!urls300.length) throw new Error("no 300px pictures came back");
+    return urls300.length + " pictures";
+  });
+
+  if (!names.length) { say(""); say("No pictures found in this folder, so the remaining tests were skipped."); $("runTests").disabled = false; return; }
+  const first20 = names.slice(0, 20);
+  const thumbPath = (n) => byPath + encodeURIComponent(n) + ":/thumbnails/0/medium";
+  say("");
+  say("B. Finding small pictures by file name (no folder list)");
+  await timed("B1 " + first20.length + " names, one request each, all at once", async () => {
+    await Promise.all(first20.map((n) => graph("https://graph.microsoft.com/v1.0" + thumbPath(n))));
+  });
+  const batchOk = await timed("B2 " + first20.length + " names in one batch request", async () => { await batch(first20.map(thumbPath)); });
+  if (batchOk) {
+    await timed("B3 all " + names.length + " names, batches of 20, 4 at a time", async () => {
+      const groups = [];
+      for (let i = 0; i < names.length; i += 20) groups.push(names.slice(i, i + 20).map(thumbPath));
+      for (let i = 0; i < groups.length; i += 4) await Promise.all(groups.slice(i, i + 4).map(batch));
+      return groups.length + " batches";
+    });
+  } else {
+    say("B3 skipped because B2 failed");
+  }
+  const direct = await timed("B4 1 small picture fetched directly by name", async () =>
+    (await authBlob("https://graph.microsoft.com/v1.0" + thumbPath(names[0]) + "/content")) + " bytes");
+  if (direct) {
+    await timed("B5 " + first20.length + " small pictures fetched directly by name, all at once", async () => {
+      await Promise.all(first20.map((n) => authBlob("https://graph.microsoft.com/v1.0" + thumbPath(n) + "/content")));
+    });
+  } else {
+    say("B5 skipped because B4 failed");
+  }
+
+  say("");
+  say("C. Showing small pictures (addresses from A3 and A5; only the first run in a folder counts)");
+  if (urls.length) {
+    await timed("C1 first " + Math.min(30, urls.length) + " small pictures (176px)", () => loadImages(urls.slice(0, 30)).then(() => ""));
+    await timed("C2 the other " + Math.max(0, urls.length - 30) + " small pictures (176px)", () => loadImages(urls.slice(30)).then(() => ""));
+  } else { say("C1, C2 skipped because A3 failed"); }
+  if (urls300.length) {
+    await timed("C3 first " + Math.min(30, urls300.length) + " pictures at 300px", () => loadImages(urls300.slice(0, 30)).then(() => ""));
+    await timed("C4 the other " + Math.max(0, urls300.length - 30) + " pictures at 300px", () => loadImages(urls300.slice(30)).then(() => ""));
+  } else { say("C3, C4 skipped because A5 failed"); }
+
+  say("");
+  say("D. One full picture by file name");
+  const last = names[names.length - 1];
+  await timed("D1 look up its address, then show it", async () => {
+    const item = await graph("https://graph.microsoft.com/v1.0" + byPath + encodeURIComponent(last) + "?select=id,size,@microsoft.graph.downloadUrl");
+    await loadImages([item["@microsoft.graph.downloadUrl"]]);
+    return Math.round(item.size / 1024) + " KB";
+  });
+  await timed("D2 fetched directly by name", async () =>
+    Math.round((await authBlob("https://graph.microsoft.com/v1.0" + byPath + encodeURIComponent(last) + ":/content")) / 1024) + " KB");
+  say("");
+  say("Finished.");
+  $("runTests").disabled = false;
+}
+
+async function copyResults() {
+  try { await navigator.clipboard.writeText(out.join("\n")); $("copyResults").textContent = "Copied"; }
+  catch (e) { $("copyResults").textContent = "Select the text and copy it"; }
+}
+
+// ---------- start-up ----------
+function showSetup() {
+  $("browser").hidden = true;
+  $("setup").hidden = false;
+  $("redirect").textContent = REDIRECT;
+  $("clientId").value = store.get(localStorage, "pv_client") || "";
+}
+
+async function showBrowser() {
+  $("setup").hidden = true;
+  $("browser").hidden = false;
+  const top = { name: "OneDrive", url: GRAPH + "/root/children" };
+  try {
+    const saved = JSON.parse(store.get(localStorage, "pv_folder") || "null");
+    if (saved && saved.length > 1) { await openFolder(saved); return; }
+  } catch (e) { /* fall through to the usual start folder */ }
+  try {
+    await openFolder([top, { name: START_FOLDER, url: GRAPH + "/root:/" + START_FOLDER + ":/children" }]);
+  } catch (e) {
+    if (e.status === 404) await openFolder([top]).catch(() => {});
+  }
+}
+
+async function start() {
+  $("signIn").addEventListener("click", () => signIn().catch((e) => showError(e.message)));
+  $("signOut").addEventListener("click", signOut);
+  $("runTests").addEventListener("click", () => runTests().catch((e) => { showError(e.message); $("runTests").disabled = false; }));
+  $("copyResults").addEventListener("click", copyResults);
+  $("viewerClose").addEventListener("click", closePicture);
+  $("viewer").addEventListener("click", (e) => { if (e.target.tagName !== "BUTTON") closePicture(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePicture(); });
+
+  const params = new URLSearchParams(location.hash.slice(1));
+  if (params.get("code") || params.get("error")) {
+    try { await finishSignIn(params); } catch (e) { showSetup(); showError(e.message); return; }
+  }
+  if (token()) await showBrowser(); else showSetup();
+}
+start();
+</script>
+</body>
+</html>
