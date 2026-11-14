@@ -12,7 +12,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const SCHEME = process.argv[2] === 'dark' ? 'dark' : 'light';
 const OUT = process.argv[3] || '';
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png', '.json': 'application/json' };
 (async () => {
   // ---- the repository's own files, served as GitHub Pages serves them
   const server = http.createServer((req, res) => {
@@ -335,6 +335,21 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/p
   quietOk = true; refreshOk = true;
   await p.click('#signInBtn'); await p.waitForSelector('#albumList .rows');
   ok('signing in again works', await vis('albums'));
+  // ---- a new version of the viewer
+  const build = /const BUILD = "([^"]+)"/.exec(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'))[1];
+  const vfile = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8')).version;
+  const vhtml = [...fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').matchAll(/\.js\?v=([^"]+)"/g)].map(m => m[1]);
+  ok('version: app.js, version.json and index.html agree', vfile === build && vhtml.length === 2 && vhtml.every(v => v === build), [build, vfile, vhtml].join(' / '));
+  ok('version: same version, no notice', !(await p.isVisible('#noticeAct')));
+  await ctx.route(BASE + 'version.json*', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"version":"9.9"}' }));
+  await p.reload(); await p.waitForSelector('#noticeAct:not([hidden])');
+  ok('version: a newer one is offered', (await p.textContent('#noticeText')).includes('9.9') && (await p.textContent('#noticeAct')) === 'Update');
+  await shot('9-update');
+  const loaded = []; p.on('request', q => { if (/\.js\?v=|\?v=9\.9/.test(q.url())) loaded.push(q.url().replace(BASE, '')); });
+  await p.click('#noticeAct'); await p.waitForSelector('#albumList .rows');
+  ok('version: Update opens the page at a new address, scripts with ?v=', loaded.includes('?v=9.9') && loaded.some(u => u.startsWith('app.js?v=')), JSON.stringify(loaded));
+  ok('version: the ?v= is dropped from the address, still signed in', p.url() === BASE && await vis('albums'), p.url());
+  await ctx.unroute(BASE + 'version.json*');
   // sign out
   await p.click('#openSettings'); await p.click('#signOut'); await p.waitForTimeout(300);
   const left = await p.evaluate(async () => ({ t: localStorage.getItem('pv_token'), r: localStorage.getItem('pv_refresh'), f: localStorage.getItem('pv_filter'), s: localStorage.getItem('pv_show'), c: await new Promise(d => { const q = indexedDB.open('photo-viewer', 1); q.onsuccess = () => { const g = q.result.transaction('kv').objectStore('kv').get('catalogue'); g.onsuccess = () => d(g.result === undefined); }; }) }));

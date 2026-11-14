@@ -7,5 +7,6 @@ A view-only web page for a family photo collection in OneDrive. Read `docs/archi
 - **No libraries, no build step, no server.** Plain `index.html`, `app.js`, `config.js`. The page talks only to Microsoft.
 - **The repository is public.** Never commit photos, catalogue data or anything personal.
 - **Changes go on a branch with a pull request.** The owner tests and merges; merging to `main` publishes the page.
+- **Every change that alters `app.js`, `index.html` or `config.js` raises the version** in three places that must agree: `BUILD` in `app.js`, `version.json`, and the two `?v=` in `index.html`. Phones only pick up a new version through this (architecture section 6a).
 - **Before a pull request,** run `node test/run.js` and `node test/run.js dark`, and keep `docs/architecture.md` in step with the code.
 - **Writing for the owner:** plain words, British spelling, step-by-step instructions for anything on GitHub or the Microsoft registration.

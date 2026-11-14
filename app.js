@@ -6,7 +6,8 @@
    The page talks only to Microsoft: the sign-in service and OneDrive (Microsoft Graph), with the single
    permission "read files".  It has no server of its own. */
 
-const VERSION = "0.3 (stage 3)";
+const BUILD = "0.3.1";                          // also in version.json and in index.html's ?v= (see CLAUDE.md)
+const VERSION = BUILD + " (stage 3)";
 const CFG = Object.assign({ clientId: "", catalogueFolder: "PhotoManager/Shared", catalogueFile: "viewer_catalogue.json.gz" },
   window.PV_CONFIG || {});
 const LOGIN = "https://login.microsoftonline.com/consumers/oauth2/v2.0";   // personal Microsoft accounts
@@ -53,12 +54,40 @@ const db = {                                    // IndexedDB: holds the copy of 
 
 // ---------------------------------------------------------------- notices
 let noticeTimer = 0;
-function notice(text, stay) {
+function notice(text, stay, action) {
   $("noticeText").textContent = text;
+  $("noticeAct").hidden = !action;
+  $("noticeAct").onclick = action ? action.run : null;
+  if (action) $("noticeAct").textContent = action.label;
+  $("noticeClose").textContent = action ? "Later" : "OK";
   $("notice").hidden = false;
   clearTimeout(noticeTimer);
   if (!stay) noticeTimer = setTimeout(() => { $("notice").hidden = true; }, 6000);
 }
+
+// ---------------------------------------------------------------- a new version of the viewer
+/* A phone keeps the page's files for a while, and a home-screen icon may keep them even after the app is
+   swiped away.  version.json is asked for past every cache; when it names another version the viewer offers
+   to update.  Updating opens the page at a new address (?v=...), which no cache holds, and index.html asks
+   for app.js and config.js with the same ?v=, so all three files come fresh. */
+const update = {
+  checkedAt: 0, ready: "",
+  async check() {
+    this.checkedAt = Date.now();
+    try {
+      const reply = await fetch("version.json?t=" + Date.now(), { cache: "no-store" });
+      const v = reply.ok ? String((await reply.json()).version || "") : "";
+      if (!v || v === BUILD) return "";
+      this.ready = v;
+      notice("A new version of the viewer is ready (" + v + ").", true, { label: "Update", run: () => this.now() });
+      return v;
+    } catch (e) { return ""; }               // no connection: try again next time
+  },
+  now() { location.replace(REDIRECT + "?v=" + encodeURIComponent(this.ready || BUILD)); },
+};
+document.addEventListener("visibilitychange", () => {   // a home-screen app is often brought back rather than reopened
+  if (document.visibilityState === "visible" && Date.now() - update.checkedAt > 5 * 60 * 1000) update.check();
+});
 
 // ---------------------------------------------------------------- sign-in (authorization code with PKCE)
 class SignInNeeded extends Error {}
@@ -911,7 +940,7 @@ function drawSettings() {
   row(about, "From", CFG.catalogueFolder + "/" + CFG.catalogueFile);
   const dev = $("deviceList");
   dev.replaceChildren();
-  row(dev, "Viewer version", VERSION);
+  row(dev, "Viewer version", VERSION + (update.ready ? " (" + update.ready + " is ready)" : ""));
   const test = row(dev, "Picture address test", "Checking…");
   addressTest.check().then((text) => { test.textContent = text; });
 }
@@ -929,8 +958,8 @@ $("checkNow").addEventListener("click", async () => {
   b.textContent = "Checking…";
   try {
     const result = await loadCatalogue(() => { drawAlbums(); grid.key = undefined; }, false);
-    notice(result === "same" ? "The photo list is up to date." : result === "kept" ? "Could not check just now." : "New photo list loaded.");
     if (result !== "same") render(history.state);
+    if (!(await update.check())) notice(result === "same" ? "The photo list is up to date." : result === "kept" ? "Could not check just now." : "New photo list loaded.");
   } catch (e) { onLoadError(e); }
   b.disabled = false;
   b.textContent = "Check for new information now";
@@ -985,6 +1014,8 @@ function onLoadError(e) {
 }
 
 async function start() {
+  if (location.search) history.replaceState(null, "", REDIRECT + location.hash);   // drop the ?v= an update used
+  update.check();
   $("photo").inert = true;
   const params = new URLSearchParams(location.hash.slice(1));
   let cameBack = "";

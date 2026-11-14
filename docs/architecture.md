@@ -1,6 +1,6 @@
 # Photo Viewer – how it is built
 
-**Applies to:** version 0.3 (stage 3), November 2026.
+**Applies to:** version 0.3.1 (stage 3), November 2026.
 **What it must do:** section 2.11 of `docs/caption_spec.md` in the private repository `NickM64/PhotoManagerPrototype`. That specification is the authority; this document explains the code.
 
 ## 1. The pieces
@@ -9,6 +9,7 @@
 | --- | --- | --- |
 | The page | `index.html` | Markup and all styles. Five screens (`signin`, `albums`, `grid`, `filter`, `settings`) and the photo overlay (`photo`). Light and dark follow the device. |
 | The viewer | `app.js` | Plain JavaScript, no libraries, no build step. |
+| Version | `version.json` | The viewer's version, read past every cache to offer updates (section 6a). Must match `BUILD` in `app.js` and the `?v=` in `index.html`. |
 | Settings | `config.js` | `clientId` (the Microsoft registration) and `catalogueFolder` (the OneDrive folder holding `viewer_catalogue.json.gz`). Neither is a secret. |
 | Icon | `apple-touch-icon.png` | Used when the page is added to a phone's home screen. |
 | Checks | `test/run.js` | Playwright at iPhone size against a stand-in for Microsoft and OneDrive (section 8). |
@@ -76,6 +77,15 @@ Each request to OneDrive costs about half a second whatever its size (trial, 13 
 | `pv_verifier`, `pv_state`, `pv_quiet`, `pv_quiet_tried` | sessionStorage | One sign-in in progress |
 
 *Sign out* removes the sign-in, the catalogue, the Filter choices and the switches. Every storage call is wrapped, so the viewer still works when storage is unavailable.
+
+## 6a. Getting a new version onto the phone
+
+Found in use (14 November 2026): after a merge, an iPhone's home-screen icon kept showing the old version, even after the app was swiped away, while a laptop browser showed the new one. GitHub Pages lets browsers keep its files for 10 minutes, and a home-screen app may keep them longer.
+
+- `version.json` holds the version. `update.check` asks for it with `cache: "no-store"` and a time on the address, so neither the phone nor GitHub's servers answer from a cache.
+- It is checked at start-up, when the viewer is brought back to the screen (at most every 5 minutes), and by *Check for new information now* in Settings.
+- When it differs from `BUILD`, a notice offers **Update**. That opens the page at `?v=<version>`, an address no cache holds, and `index.html` asks for `app.js?v=` and `config.js?v=`, so all three come fresh. The `?v=` is removed from the address at start-up. The sign-in, photo list and choices are kept.
+- So **each release raises the version in `app.js` (`BUILD`), `version.json` and `index.html` (both `?v=`)**. `test/run.js` fails if they differ.
 
 ## 7. Still to be confirmed in use
 

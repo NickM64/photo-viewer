@@ -70,6 +70,7 @@
   #notice[hidden] { display: none; }
   #notice p { flex: 1; overflow-wrap: anywhere; white-space: pre-wrap; }
   #notice button { border: 0; background: none; color: inherit; font-weight: 650; padding: 0 4px; }
+  #notice #noticeAct { text-decoration: underline; }
 
   /* sign in */
   #signin .body { padding-top: 12vh; }
@@ -259,9 +260,9 @@
   <div id="photoInfo"></div>
 </section>
 
-<div id="notice" hidden role="status"><p id="noticeText"></p><button id="noticeClose" aria-label="Dismiss">OK</button></div>
+<div id="notice" hidden role="status"><p id="noticeText"></p><button id="noticeAct" hidden></button><button id="noticeClose" aria-label="Dismiss">OK</button></div>
 
-<script src="config.js"></script>
-<script src="app.js"></script>
+<script src="config.js?v=0.3.1"></script>
+<script src="app.js?v=0.3.1"></script>
 </body>
 </html>
