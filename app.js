@@ -1,11 +1,12 @@
 "use strict";
 /* Photo Viewer - view only (Photo Manager spec section 2.11).
    Stage 2: sign-in that stays signed in, the Viewer Catalogue File, Albums, Grid and Photo screens.
+   Stage 3: the Filter (2.11.5) and the caption / place / date switches in Settings.
 
    The page talks only to Microsoft: the sign-in service and OneDrive (Microsoft Graph), with the single
    permission "read files".  It has no server of its own. */
 
-const VERSION = "0.2 (stage 2)";
+const VERSION = "0.3 (stage 3)";
 const CFG = Object.assign({ clientId: "", catalogueFolder: "PhotoManager/Shared", catalogueFile: "viewer_catalogue.json.gz" },
   window.PV_CONFIG || {});
 const LOGIN = "https://login.microsoftonline.com/consumers/oauth2/v2.0";   // personal Microsoft accounts
@@ -143,7 +144,9 @@ async function accessToken(forceRenew) {
 }
 
 function forgetSignIn() {
-  for (const k of ["pv_token", "pv_expires", "pv_refresh", "pv_signed_in", "pv_addrtest"]) store.del(k);
+  for (const k of ["pv_token", "pv_expires", "pv_refresh", "pv_signed_in", "pv_addrtest", "pv_filter", "pv_show"]) store.del(k);
+  FILTER = readFilter();
+  SHOW = readShow();
 }
 
 // ---------------------------------------------------------------- OneDrive (Microsoft Graph)
@@ -209,22 +212,185 @@ function useCatalogue(data, info) {
   fullAddress.clear();
 }
 
-/* The photos of one album (a number) or of the whole collection ("all"), oldest first, undated last. */
+/* The photos of one album (a number) or of the whole collection ("all"), oldest first, undated last;
+   or the photos the Filter matches ("filter"), in the order the Filter asks for. */
 function listFor(key) {
   if (CAT.lists.has(key)) return CAT.lists.get(key);
   const { data, col } = CAT;
-  const out = [];
-  data.photos.forEach((p, i) => { if (key === "all" || p[col.album] === key) out.push(i); });
-  const when = (i) => data.photos[i][col.date] || data.photos[i][col.date_sort] || "￿";
-  out.sort((a, b) => {
-    const x = when(a), y = when(b);
-    if (x !== y) return x < y ? -1 : 1;
-    const f = data.photos[a][col.file], g = data.photos[b][col.file];
-    return f < g ? -1 : f > g ? 1 : 0;
-  });
+  let out = [];
+  if (key === "filter") out = filterMatches(FILTER);
+  else data.photos.forEach((p, i) => { if (key === "all" || p[col.album] === key) out.push(i); });
+  const order = key === "filter" ? FILTER.order : "old";
+  const when = (i) => data.photos[i][col.date] || data.photos[i][col.date_sort] || "";
+  const byName = (a, b) => { const f = data.photos[a][col.file], g = data.photos[b][col.file]; return f < g ? -1 : f > g ? 1 : 0; };
+  if (order === "name") out.sort(byName);
+  else {
+    const way = order === "new" ? -1 : 1;
+    out.sort((a, b) => {
+      const x = when(a), y = when(b);
+      if (x !== y) return !x ? 1 : !y ? -1 : x < y ? -way : way;      // no date: last, whichever way
+      return byName(a, b);
+    });
+  }
   CAT.lists.set(key, out);
   return out;
 }
+
+// ---------------------------------------------------------------- the Filter (spec 2.11.5)
+/* The choices are kept on the device.  Matching needs no request: it only reads the catalogue. */
+const NO_FILTER = { text: "", album: "", site: "", location: "", from: "", to: "", rating: 0, type: "", order: "old" };
+function readFilter() {
+  let kept = null;
+  try { kept = JSON.parse(store.get("pv_filter") || "null"); } catch (e) { kept = null; }
+  return Object.assign({}, NO_FILTER, kept && typeof kept === "object" ? kept : {});
+}
+let FILTER = readFilter();
+function saveFilter(f) {
+  FILTER = f;
+  store.set("pv_filter", JSON.stringify(f));
+  if (CAT) CAT.lists.delete("filter");
+  if (grid.key === "filter") grid.key = undefined;            // the grid is drawn again when next shown
+}
+
+/* Capitals, accents and spaces at either end are ignored, as in the Captioning App. */
+const plain = (s) => String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+const yearOf = (s) => { const m = /^\s*(\d{4})\s*$/.exec(s || ""); return m ? Number(m[1]) : 0; };
+
+/* One line of text per photo for Search, made the first time Search is used. */
+function searchText() {
+  if (CAT.hay) return CAT.hay;
+  const { data, col } = CAT;
+  const albumText = data.albums.map((a) => a.path + "\n" + (a.title || ""));
+  const extra = ["location_long", "keywords", "people"].filter((n) => n in col).map((n) => col[n]);
+  CAT.hay = data.photos.map((p) => {
+    let s = p[col.caption] + "\n" + p[col.site] + "\n" + p[col.city] + "\n" + p[col.state] + "\n" + p[col.country] + "\n" + albumText[p[col.album]];
+    for (const c of extra) s += "\n" + (p[c] || "");
+    return plain(s);
+  });
+  return CAT.hay;
+}
+
+/* The photos that match every choice that is filled in (not yet in order). */
+function filterMatches(f) {
+  const { data, col } = CAT;
+  const words = plain(f.text).split(/\s+/).filter(Boolean);
+  const hay = words.length ? searchText() : null;
+  const album = f.album ? data.albums.findIndex((a) => a.path === f.album) : -1;
+  const site = plain(f.site), place = plain(f.location), rating = Number(f.rating) || 0;
+  let from = yearOf(f.from), to = yearOf(f.to);
+  if (from && to && from > to) [from, to] = [to, from];
+  const out = [];
+  data.photos.forEach((p, i) => {
+    if (f.album && p[col.album] !== album) return;
+    if (f.type === "photo" && p[col.video]) return;
+    if (f.type === "video" && !p[col.video]) return;
+    if (rating && !(p[col.rating] >= rating)) return;
+    if (from || to) {
+      const y = Number(String(p[col.date] || p[col.date_sort] || "").slice(0, 4));
+      if (!y || (from && y < from) || (to && y > to)) return;
+    }
+    if (site && !plain(p[col.site]).includes(site)) return;
+    if (place && !plain(p[col.city]).includes(place) && !plain(p[col.state]).includes(place) && !plain(p[col.country]).includes(place)) return;
+    for (const w of words) if (!hay[i].includes(w)) return;
+    out.push(i);
+  });
+  return out;
+}
+
+/* The active choices on one line; "" when nothing is chosen and the order is the usual one. */
+function filterSummary(f) {
+  const parts = [];
+  if (f.text.trim()) parts.push("\u201c" + f.text.trim() + "\u201d");
+  if (f.album) parts.push("Album: " + f.album.split("/").pop());
+  if (f.site.trim()) parts.push("Site: " + f.site.trim());
+  if (f.location.trim()) parts.push("Location: " + f.location.trim());
+  let from = yearOf(f.from), to = yearOf(f.to);
+  if (from && to && from > to) [from, to] = [to, from];
+  if (from && to) parts.push(from === to ? String(from) : from + "\u2013" + to);
+  else if (from) parts.push("From " + from);
+  else if (to) parts.push("Up to " + to);
+  const r = Number(f.rating) || 0;
+  if (r) parts.push(r === 5 ? "5 stars" : r + (r === 1 ? " star" : " stars") + " or more");
+  if (f.type === "photo") parts.push("Photos only");
+  if (f.type === "video") parts.push("Videos only");
+  if (f.order === "new") parts.push("Newest first");
+  if (f.order === "name") parts.push("By file name");
+  return parts.join(" \u00b7 ");
+}
+
+const filterForm = {
+  ready: null,                                                // the catalogue the lists were made for
+  read() {
+    return { text: $("fText").value, album: $("fAlbum").value, site: $("fSite").value, location: $("fPlace").value,
+      from: $("fFrom").value, to: $("fTo").value, rating: Number($("fRating").value) || 0, type: $("fType").value, order: $("fOrder").value };
+  },
+  fill(f) {
+    $("fText").value = f.text; $("fAlbum").value = f.album; $("fSite").value = f.site; $("fPlace").value = f.location;
+    $("fFrom").value = f.from; $("fTo").value = f.to; $("fRating").value = String(f.rating || 0); $("fType").value = f.type; $("fOrder").value = f.order;
+    if ($("fAlbum").selectedIndex < 0) $("fAlbum").selectedIndex = 0;      // an album no longer in the photo list
+  },
+  lists() {                                                   // album choices and the suggestions, once per catalogue
+    if (this.ready === CAT) return;
+    this.ready = CAT;
+    const { data, col } = CAT;
+    const sel = $("fAlbum");
+    sel.replaceChildren(new Option("All albums", ""));
+    for (const [y, list] of albumsByYear()) {
+      const g = document.createElement("optgroup");
+      g.label = y || "No year";
+      for (const i of list) g.append(new Option(data.albums[i].name, data.albums[i].path));
+      sel.append(g);
+    }
+    const sites = new Set(), places = new Set();
+    let lo = 9999, hi = 0;
+    for (const p of data.photos) {
+      if (p[col.site]) sites.add(p[col.site]);
+      for (const c of [col.city, col.state, col.country]) if (p[c]) places.add(p[c]);
+      const y = Number(String(p[col.date] || p[col.date_sort] || "").slice(0, 4));
+      if (y) { if (y < lo) lo = y; if (y > hi) hi = y; }
+    }
+    const options = (id, set) => $(id).replaceChildren(...[...set].sort((x, y) => x.localeCompare(y, undefined, { sensitivity: "base" })).map((v) => new Option(v, v)));
+    options("siteNames", sites);
+    options("placeNames", places);
+    $("fFrom").placeholder = hi ? String(lo) : "";
+    $("fTo").placeholder = hi ? String(hi) : "";
+  },
+  draw() {
+    this.lists();
+    this.fill(FILTER);
+    if ($("fAlbum").value !== FILTER.album) saveFilter(this.read());
+    this.count();
+  },
+  count() {
+    const found = filterMatches(FILTER);
+    $("filterCount").textContent = found.length ? countText(found) : "No photos match";
+    $("filterShow").disabled = !found.length;
+  },
+  changed() { saveFilter(this.read()); this.count(); },
+};
+(function filterControls() {
+  let timer = 0;
+  $("filterForm").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => filterForm.changed(), 120); });
+  $("filterForm").addEventListener("change", () => { clearTimeout(timer); filterForm.changed(); });
+  const show = () => {
+    clearTimeout(timer);
+    filterForm.changed();
+    if ($("filterShow").disabled) return;
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();   // puts the phone's keyboard away
+    if (shown.fromGrid) history.back(); else go({ v: "grid", album: "filter", photo: null });
+  };
+  $("filterForm").addEventListener("submit", (e) => { e.preventDefault(); show(); });
+  $("filterShow").addEventListener("click", show);
+  $("filterClear").addEventListener("click", () => { clearTimeout(timer); filterForm.fill(NO_FILTER); filterForm.changed(); });
+})();
+
+/* Which lines the photo screen shows (Settings), kept on the device. */
+function readShow() {
+  let kept = null;
+  try { kept = JSON.parse(store.get("pv_show") || "null"); } catch (e) { kept = null; }
+  return Object.assign({ caption: true, place: true, date: true }, kept && typeof kept === "object" ? kept : {});
+}
+let SHOW = readShow();
 
 const cataloguePath = () => "/me/drive/root:/" + encPath(CFG.catalogueFolder + "/" + CFG.catalogueFile);
 
@@ -422,7 +588,7 @@ const addressTest = {
 };
 
 // ---------------------------------------------------------------- screens and moving between them
-const LAYERS = ["signin", "albums", "grid", "settings"];
+const LAYERS = ["signin", "albums", "grid", "filter", "settings"];
 let shown = { v: "", album: null, photo: null };
 
 function showLayer(name) {
@@ -433,7 +599,8 @@ function showLayer(name) {
   }
 }
 
-/* state = { v: "albums" | "grid" | "settings", album: number | "all", photo: position in the list or null } */
+/* state = { v: "albums" | "grid" | "filter" | "settings", album: number | "all" | "filter", photo: position in the list or null,
+             fromGrid: true when the Filter screen was opened from the grid of Filter results } */
 function go(state, replace) {
   if (replace) history.replaceState(state, ""); else history.pushState(state, "");
   render(state);
@@ -441,7 +608,7 @@ function go(state, replace) {
 function render(state) {
   if (!CAT) return;
   state = state || { v: "albums" };
-  if (state.v === "grid" && (state.album === "all" || CAT.data.albums[state.album])) {
+  if (state.v === "grid" && (state.album === "all" || state.album === "filter" || CAT.data.albums[state.album])) {
     if (grid.key !== state.album) grid.build(state.album);
     showLayer("grid");
     if (state.photo != null && state.photo < grid.list.length) photo.open(state.photo); else photo.close();
@@ -449,8 +616,13 @@ function render(state) {
     photo.close();
     showLayer("settings");
     drawSettings();
+  } else if (state.v === "filter") {
+    photo.close();
+    showLayer("filter");
+    filterForm.draw();
   } else {
     photo.close();
+    drawFilterRow();
     showLayer("albums");
   }
   shown = state;
@@ -462,21 +634,12 @@ function countText(indices) {
   for (const i of indices) videos += CAT.data.photos[i][CAT.col.video] ? 1 : 0;
   const n = indices.length - videos;
   const part = (k, word) => k.toLocaleString() + " " + word + (k === 1 ? "" : "s");
-  return videos ? part(n, "photo") + ", " + part(videos, "video") : part(n, "photo");
+  return !videos ? part(n, "photo") : n ? part(n, "photo") + ", " + part(videos, "video") : part(videos, "video");
 }
 
 // ---- Albums
-function drawAlbums() {
-  const box = $("albumList");
-  box.replaceChildren();
-  const { albums, photos } = CAT.data;
-  const all = el("div", "rows");
-  const b = el("button");
-  b.append(el("span", "", "All photos"), el("span", "n", photos.length.toLocaleString()));
-  b.addEventListener("click", () => go({ v: "grid", album: "all", photo: null }));
-  all.append(b);
-  box.append(all);
-
+function albumsByYear() {                         // [[year text, [album numbers]], ...] newest year first, no year last
+  const { albums } = CAT.data;
   const years = new Map();
   albums.forEach((a, i) => {
     if (!a.count) return;
@@ -485,11 +648,41 @@ function drawAlbums() {
     years.get(y).push(i);
   });
   const order = [...years.keys()].sort((x, y) => (x === "" ? 1 : y === "" ? -1 : Number(y) - Number(x)));
-  for (const y of order) {
+  return order.map((y) => [y, years.get(y).sort((i, j) => albums[i].name.localeCompare(albums[j].name, undefined, { numeric: true, sensitivity: "base" }))]);
+}
+
+/* The line under "All photos" that reopens the Filter's photos; only there while a choice is made. */
+function drawFilterRow() {
+  const b = $("filterRow");
+  if (!b) return;
+  const summary = filterSummary(FILTER);
+  b.hidden = !summary;
+  if (!summary) return;
+  const text = el("span", "", "Filter");
+  text.append(el("span", "what", summary));
+  b.replaceChildren(text, el("span", "n", listFor("filter").length.toLocaleString()));
+}
+
+function drawAlbums() {
+  const box = $("albumList");
+  box.replaceChildren();
+  const { albums, photos } = CAT.data;
+  const all = el("div", "rows");
+  const b = el("button");
+  b.append(el("span", "", "All photos"), el("span", "n", photos.length.toLocaleString()));
+  b.addEventListener("click", () => go({ v: "grid", album: "all", photo: null }));
+  const f = el("button");
+  f.id = "filterRow";
+  f.hidden = true;
+  f.addEventListener("click", () => go({ v: "grid", album: "filter", photo: null }));
+  all.append(b, f);
+  box.append(all);
+  drawFilterRow();
+
+  for (const [y, list] of albumsByYear()) {
     box.append(el("p", "year", y || "NO YEAR"));
     const rows = el("div", "rows");
-    years.get(y).sort((i, j) => albums[i].name.localeCompare(albums[j].name, undefined, { numeric: true, sensitivity: "base" }));
-    for (const i of years.get(y)) {
+    for (const i of list) {
       const r = el("button");
       r.append(el("span", "", albums[i].name), el("span", "n", albums[i].count.toLocaleString()));
       r.addEventListener("click", () => go({ v: "grid", album: i, photo: null }));
@@ -511,10 +704,15 @@ const grid = {
     $("cells").replaceChildren();
     $("grid").scrollTop = 0;
     const title = $("gridTitle");
-    title.replaceChildren(document.createTextNode(key === "all" ? "All photos" : CAT.data.albums[key].name),
+    const filtered = key === "filter";
+    title.replaceChildren(document.createTextNode(key === "all" ? "All photos" : filtered ? "Filter" : CAT.data.albums[key].name),
       el("span", "sub", countText(this.list)));
+    $("gridBack").textContent = filtered ? "\u2039 Back" : "\u2039 Albums";
+    $("gridFilter").hidden = !filtered;
+    $("gridSummary").hidden = !filtered;
+    $("gridSummary").textContent = filtered ? filterSummary(FILTER) || "No choices made: all photos" : "";
     $("gridNote").hidden = this.list.length > 0;
-    $("gridNote").textContent = "No photos here.";
+    $("gridNote").textContent = filtered ? "No photos match the Filter." : "No photos here.";
     if (this.watcher) this.watcher.disconnect();
     if (this.more) this.more.disconnect();
     // a picture is asked for when its cell comes within two screens of view
@@ -529,7 +727,10 @@ const grid = {
       { root: $("grid"), rootMargin: "300% 0px" });
     this.more.observe($("gridEnd"));
     this.addChunk();
-    if (key !== "all" && this.list.length) thumbs.listAlbum(key);        // an album: one request for the lot
+    // an album, or a Filter that names one: one request for the lot.  Otherwise thumbs.want decides as cells come into view.
+    const one = filtered ? (FILTER.album ? CAT.data.albums.findIndex((a) => a.path === FILTER.album) : -1) : key === "all" ? -1 : key;
+    if (one >= 0 && this.list.length >= LIST_ALBUM_FROM) thumbs.listAlbum(one);
+    else if (one >= 0 && !filtered && this.list.length) thumbs.listAlbum(one);
   },
 
   addChunk(upTo) {
@@ -614,11 +815,11 @@ const photo = {
 
     const info = $("photoInfo");
     info.replaceChildren();
-    if (p[col.caption]) info.append(el("p", "cap", p[col.caption]));
+    if (SHOW.caption && p[col.caption]) info.append(el("p", "cap", p[col.caption]));
     const place = [p[col.site], p[col.city], p[col.state], p[col.country]].filter(Boolean).join(", ");
-    if (place) info.append(el("p", "meta", place));
+    if (SHOW.place && place) info.append(el("p", "meta", place));
     const date = dateText(p);
-    if (date) info.append(el("p", "meta", date));
+    if (SHOW.date && date) info.append(el("p", "meta", date));
     if (p[col.rating] > 0) { const s = el("p", "stars", "★".repeat(p[col.rating])); s.setAttribute("aria-label", p[col.rating] + " stars"); info.append(s); }
 
     const stage = $("stage");
@@ -699,6 +900,7 @@ const photo = {
 
 // ---- Settings
 function drawSettings() {
+  $("showCaption").checked = SHOW.caption; $("showPlace").checked = SHOW.place; $("showDate").checked = SHOW.date;
   const row = (dl, name, value) => { const d = el("div"); d.append(el("dt", "", name), el("dd", "", value)); dl.append(d); return d.lastChild; };
   const when = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "-");
   const about = $("aboutList");
@@ -714,6 +916,11 @@ function drawSettings() {
   addressTest.check().then((text) => { test.textContent = text; });
 }
 $("openSettings").addEventListener("click", () => go({ v: "settings" }));
+$("openFilter").addEventListener("click", () => go({ v: "filter" }));
+$("gridFilter").addEventListener("click", () => go({ v: "filter", fromGrid: true }));
+for (const [id, key] of [["showCaption", "caption"], ["showPlace", "place"], ["showDate", "date"]]) {
+  $(id).addEventListener("change", () => { SHOW[key] = $(id).checked; store.set("pv_show", JSON.stringify(SHOW)); });
+}
 for (const b of document.querySelectorAll("[data-back]")) b.addEventListener("click", () => history.back());
 $("noticeClose").addEventListener("click", () => { $("notice").hidden = true; });
 $("checkNow").addEventListener("click", async () => {

@@ -51,9 +51,14 @@
   }
   .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
   .btn.wide { display: block; width: 100%; text-align: center; margin-top: 12px; }
-  input[type=text] {
+  input[type=text], input[type=search], select {
     width: 100%; padding: 12px; margin-top: 6px; font: inherit; color: var(--text);
     background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    -webkit-appearance: none; appearance: none; min-height: 48px;
+  }
+  select {
+    padding-right: 34px; background-repeat: no-repeat; background-position: right 12px center; background-size: 12px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23888' stroke-width='2'/%3E%3C/svg%3E");
   }
 
   /* notice strip */
@@ -79,6 +84,7 @@
     padding: 13px 14px; min-height: 50px; border: 0; border-top: 1px solid var(--line); background: none;
   }
   .rows button:first-child { border-top: 0; }
+  .rows button[hidden] { display: none; }
   .rows button span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .rows button .n { color: var(--muted); font-variant-numeric: tabular-nums; }
   .rows button .n::after { content: "  \203A"; }
@@ -99,6 +105,23 @@
   }
   #gridEnd { height: 1px; }
   #gridNote { padding: 28px var(--pad); text-align: center; }
+
+  .summary { padding: 8px var(--pad); color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; border-bottom: 1px solid var(--line); }
+
+  /* filter */
+  #filter .body { padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
+  .fld { display: block; margin-top: 14px; font-size: 0.9rem; font-weight: 600; }
+  .fld small { font-weight: 400; color: var(--muted); }
+  .pair { display: flex; gap: 12px; }
+  .pair .fld { flex: 1; min-width: 0; }
+  .foot {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; display: flex; align-items: center; gap: 12px;
+    padding: 10px var(--pad) calc(10px + env(safe-area-inset-bottom));
+    background: var(--bg); border-top: 1px solid var(--line);
+  }
+  .foot p { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
+  .foot .btn:disabled { opacity: 0.45; }
+  .rows button .what { display: block; color: var(--muted); font-size: 0.85rem; }
 
   /* one photo */
   #photo { position: fixed; inset: 0; z-index: 10; background: #000; color: #fff; display: flex; flex-direction: column; }
@@ -137,9 +160,22 @@
   dl div { display: flex; gap: 12px; padding: 12px 14px; border-top: 1px solid var(--line); }
   dl div:first-child { border-top: 0; }
   dt { color: var(--muted); flex: 0 0 42%; } dd { margin: 0; flex: 1; overflow-wrap: anywhere; }
+  .sw { display: flex; align-items: center; gap: 12px; padding: 10px 14px; min-height: 50px; border-top: 1px solid var(--line); }
+  .sw:first-child { border-top: 0; }
+  .sw span { flex: 1; }
+  .sw input {
+    -webkit-appearance: none; appearance: none; flex: none; width: 52px; height: 32px; margin: 0; border-radius: 16px;
+    background: var(--line); position: relative; cursor: pointer; transition: background 0.15s;
+  }
+  .sw input::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); transition: transform 0.15s;
+  }
+  .sw input:checked { background: var(--accent); }
+  .sw input:checked::after { transform: translateX(20px); }
   .spin { display: inline-block; width: 1.1em; height: 1.1em; vertical-align: -0.2em; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } .cell img, #photoTop, #photoInfo { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } .cell img, #photoTop, #photoInfo, .sw input, .sw input::after { transition: none; } }
 </style>
 </head>
 <body>
@@ -158,27 +194,60 @@
 </section>
 
 <section id="albums" class="layer off">
-  <header class="bar"><h1>Photos</h1><button id="openSettings">Settings</button></header>
+  <header class="bar"><h1>Photos</h1><button id="openFilter">Filter</button><button id="openSettings">Settings</button></header>
   <div class="body" id="albumList"><p class="muted" style="padding-top:24px"><span class="spin"></span> Getting the photo list…</p></div>
 </section>
 
 <section id="grid" class="layer off">
-  <header class="bar"><button class="back" data-back aria-label="Back to albums">&#8249; Albums</button><h1 id="gridTitle"></h1></header>
+  <header class="bar"><button class="back" data-back id="gridBack">&#8249; Albums</button><h1 id="gridTitle"></h1><button id="gridFilter" hidden>Filter</button></header>
+  <p id="gridSummary" class="summary" hidden></p>
   <div id="cells"></div>
   <div id="gridEnd"></div>
   <p id="gridNote" class="muted small" hidden></p>
 </section>
 
+<section id="filter" class="layer off">
+  <header class="bar"><button class="back" data-back aria-label="Back">&#8249; Back</button><h1>Filter</h1><button id="filterClear">Clear</button></header>
+  <form class="body" id="filterForm" autocomplete="off">
+    <label class="fld">Search <small>caption, place, album, keywords, people</small>
+      <input type="search" id="fText" enterkeyhint="search" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    <label class="fld">Album <select id="fAlbum"></select></label>
+    <label class="fld">Site <small>part of the name</small>
+      <input type="text" id="fSite" list="siteNames" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    <label class="fld">Location <small>part of the city, state or country</small>
+      <input type="text" id="fPlace" list="placeNames" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    <div class="pair">
+      <label class="fld">From year <input type="text" id="fFrom" inputmode="numeric" maxlength="4"></label>
+      <label class="fld">To year <input type="text" id="fTo" inputmode="numeric" maxlength="4"></label>
+    </div>
+    <label class="fld">Rating <select id="fRating">
+      <option value="0">Any</option><option value="1">1 star or more</option><option value="2">2 stars or more</option>
+      <option value="3">3 stars or more</option><option value="4">4 stars or more</option><option value="5">5 stars</option></select></label>
+    <label class="fld">Type <select id="fType">
+      <option value="">Photos and videos</option><option value="photo">Photos only</option><option value="video">Videos only</option></select></label>
+    <label class="fld">Order <select id="fOrder">
+      <option value="old">Oldest first</option><option value="new">Newest first</option><option value="name">By file name</option></select></label>
+    <datalist id="siteNames"></datalist><datalist id="placeNames"></datalist>
+  </form>
+  <div class="foot"><p id="filterCount" role="status"></p><button class="btn primary" id="filterShow">Show</button></div>
+</section>
+
 <section id="settings" class="layer off">
   <header class="bar"><button class="back" data-back aria-label="Back">&#8249; Back</button><h1>Settings</h1></header>
   <div class="body">
+    <p class="year">ON THE PHOTO SCREEN</p>
+    <div class="rows">
+      <label class="sw"><span>Show caption</span><input type="checkbox" role="switch" id="showCaption"></label>
+      <label class="sw"><span>Show place</span><input type="checkbox" role="switch" id="showPlace"></label>
+      <label class="sw"><span>Show date</span><input type="checkbox" role="switch" id="showDate"></label>
+    </div>
     <p class="year">PHOTO LIST</p>
     <div class="rows"><dl id="aboutList"></dl></div>
     <button class="btn wide" id="checkNow">Check for new information now</button>
     <p class="year">THIS DEVICE</p>
     <div class="rows"><dl id="deviceList"></dl></div>
     <button class="btn wide" id="signOut">Sign out</button>
-    <p class="muted small" style="margin-top:10px">Sign out forgets the sign-in and the photo list kept on this device.</p>
+    <p class="muted small" style="margin-top:10px">Sign out forgets the sign-in, the photo list, and the Filter and Settings choices kept on this device.</p>
   </div>
 </section>
 
