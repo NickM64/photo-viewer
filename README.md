@@ -14,3 +14,5 @@ The specification is section 2.11 of the Photo Manager specification, which is k
 | `app.js` | The viewer |
 | `config.js` | Settings: the Microsoft registration's client ID and the OneDrive folder holding the catalogue file |
 | `apple-touch-icon.png` | The icon used when the page is added to a phone's home screen |
+| `docs/architecture.md` | How the viewer is built, and what is still to be confirmed |
+| `test/run.js` | Automatic checks against a stand-in for Microsoft and OneDrive |
