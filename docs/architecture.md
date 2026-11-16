@@ -1,6 +1,6 @@
 # Photo Viewer – how it is built
 
-**Applies to:** version 0.3.1 (stage 3), November 2026.
+**Applies to:** version 0.3.2 (stage 3), November 2026.
 **What it must do:** section 2.11 of `docs/caption_spec.md` in the private repository `NickM64/PhotoManagerPrototype`. That specification is the authority; this document explains the code.
 
 ## 1. The pieces
@@ -21,7 +21,7 @@ It is published by GitHub Pages from the `main` branch at `https://nickm64.githu
 - **Viewer Catalogue File.** `viewer_catalogue.json.gz` is written by the desktop applications (`pm_viewer.py` in the Photo Manager repository, spec 2.11.2) into the shared OneDrive folder. Format 1: a header (`format`, `written_at`, `machine`, `pictures_path`), `albums` (`path`, `title`, `year`), `columns`, and `photos` (one list per photo, one value per column).
 - **A photo's file in OneDrive** is `pictures_path / albums[album].path / file`.
 - **`loadCatalogue`** shows the copy kept on the device at once (IndexedDB), then asks OneDrive for the file's `eTag` (one request) and downloads it only when that has changed. `useCatalogue` checks the format and columns and builds the album counts.
-- **`listFor(key)`** gives the photos of one album (a number), of everything (`"all"`) or of the Filter (`"filter"`, section 5a). Albums and everything are oldest first by `date` or `date_sort`, undated last, then by file name; the Filter's list is in the order the Filter asks for. Lists are kept in `CAT.lists`.
+- **`listFor(key)`** gives the photos of one album (a number), of everything (`"all"`) or of the Filter (`"filter"`, section 5a). Albums and everything are oldest first by `date` or `date_sort`, undated last, then by file name; on the same day a photo with only a `date_sort` (which has no time) follows those with a `date` (`when` adds `~` to it, which sorts after `T`); the Filter's list is in the order the Filter asks for. Lists are kept in `CAT.lists`.
 
 ## 3. Signing in
 

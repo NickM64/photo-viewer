@@ -3,6 +3,7 @@
 
    Needs Node.js with Playwright (and its Chromium).   Run from the repository folder:
        node test/run.js [light|dark] [folder for screenshots]
+   (Set PW_CHROME to a Chrome executable to use it instead of Playwright's own Chromium.)
    Prints PASS / FAIL lines and ends with a non-zero code if anything failed. */
 const { chromium, devices } = require('playwright');
 const zlib = require('zlib');
@@ -38,13 +39,14 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/p
   add(1, "2019-07-15_Padstow_0A04.jpg", { date: "2019-07-15T15:00:00" });
   add(1, "2019-07-16_Gone_0A05.jpg", { date: "2019-07-16T15:00:00", caption: "Not in OneDrive" });
   for (let i = 1; i <= 7; i++) add(2, `2019-12-25_Home_0B0${i}.jpg`, { date: "2019-12-25T1" + i + ":00:00", caption: "Christmas " + i, rating: i % 6 });
+  add(2, "2019-Christmas_0B08.jpg", { date_text: "Christmas 2019", date_sort: "2019-12-25", caption: "Christmas, no camera date" });
   add(3, "Scans_0C01.jpg", { date_text: "about 1962", caption: "Grandma at the seaside", site: "Café Régence", city: "Besançon", country: "France", rating: 5 });
   add(3, "Scans_0C02.jpg", {});
   const cat = { format: 1, written_at: "2026-11-14T08:55:00Z", machine: "ASPIRE", pictures_path: "PhotoManager/LargePictures", album_count: 4, photo_count: photos.length, albums, columns, photos };
   const gz = zlib.gzipSync(JSON.stringify(cat));
   let etag = '"v1"';
 
-  const b = await chromium.launch();
+  const b = await chromium.launch(process.env.PW_CHROME ? { executablePath: process.env.PW_CHROME } : {});
   const ctx = await b.newContext({ ...devices['iPhone 13'], colorScheme: SCHEME });
   const p = await ctx.newPage();
   const log = [], seen = [];
@@ -113,7 +115,7 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/p
   const yearHeads = await p.$$eval('#albumList .year', e => e.map(x => x.textContent));
   ok('albums grouped by year, newest first, no-year last', JSON.stringify(yearHeads) === '["2019","2000","NO YEAR"]', JSON.stringify(yearHeads));
   const rows = await p.$$eval('#albumList .rows button:not([hidden])', e => e.map(x => x.textContent));
-  ok('album rows: folder names and counts', rows[0] === 'All photos' + photos.length && rows[1] === '2019 Christmas7' && rows[2] === '2019 Cornwall & Devon5' && rows[3] === '2000 Kodak620' && rows[4] === "Grandma's box2", JSON.stringify(rows));
+  ok('album rows: folder names and counts', rows[0] === 'All photos' + photos.length && rows[1] === '2019 Christmas8' && rows[2] === '2019 Cornwall & Devon5' && rows[3] === '2000 Kodak620' && rows[4] === "Grandma's box2", JSON.stringify(rows));
   await shot('2-albums');
 
   // an album
@@ -124,6 +126,10 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/p
   ok('album: one list request, one size', seen.length === 1 && seen[0].includes(":/children?$select=id,name&$expand=thumbnails($select=c300x300_crop)&$top=1000"), JSON.stringify(seen));
   const order = await p.$$eval('#cells .cell img', e => e.map(x => x.alt.slice(0, 18)));
   ok('album: oldest first, undated-with-sort-date in place', order[0].startsWith('Summer') === false && order.length === 5, JSON.stringify(order));
+  const xmas = await p.evaluate(() => listFor(2).map((i) => CAT.data.photos[i][CAT.col.file].slice(-8)));
+  ok('album: same day, the photo with only a sort date follows the camera photos', xmas.length === 8 && xmas[7] === '0B08.jpg' && xmas[0] === '0B01.jpg', JSON.stringify(xmas));
+  const xmasNew = await p.evaluate(() => { const f = FILTER; FILTER = { ...f, album: '2019/2019 Christmas', order: 'new' }; CAT.lists.delete('filter'); const r = listFor('filter').map((i) => CAT.data.photos[i][CAT.col.file].slice(-8)); FILTER = f; CAT.lists.delete('filter'); return r; });
+  ok('newest first: the same day reversed, the sort-date-only photo first', xmasNew[0] === '0B08.jpg' && xmasNew[7] === '0B01.jpg', JSON.stringify(xmasNew));
   ok('album: video marker with length', (await p.textContent('#cells .cell .tag')).includes('1:23'));
   ok('album: file missing in OneDrive shows not found', await p.$$eval('#cells .cell.missing', e => e.length) === 1);
   await shot('3-album');
@@ -199,7 +205,7 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/p
   seen.length = 0;
   ok('albums: no Filter line while nothing is chosen', !(await p.isVisible('#filterRow')));
   await p.click('#openFilter');
-  ok('filter: opens with everything matching', await vis('filter') && (await count()) === '633 photos, 1 video', await count());
+  ok('filter: opens with everything matching', await vis('filter') && (await count()) === '634 photos, 1 video', await count());
   const albumChoices = await p.$$eval('#fAlbum option', e => e.map(x => x.textContent));
   ok('filter: album choices in the Albums order', JSON.stringify(albumChoices) === JSON.stringify(['All albums', '2019 Christmas', '2019 Cornwall & Devon', '2000 Kodak', "Grandma's box"]), JSON.stringify(albumChoices));
   ok('filter: suggestions from the Sites and places in use', JSON.stringify(await p.$$eval('#siteNames option', e => e.map(x => x.value))) === '["Café Régence","Harlyn Bay"]' && (await p.$$eval('#placeNames option', e => e.map(x => x.value))).join() === 'Besançon,England,France,Padstow,United Kingdom');
@@ -228,9 +234,9 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/p
   ok('location: country', (await count()) === '1 photo, 1 video', await count());
   await type('#fPlace', '');
   await type('#fFrom', '2019');
-  ok('years: from; sort date used, undated left out', (await count()) === '11 photos, 1 video', await count());
+  ok('years: from; sort date used, undated left out', (await count()) === '12 photos, 1 video', await count());
   await type('#fTo', '2000'); 
-  ok('years: the wrong way round is put right', (await count()) === '631 photos, 1 video', await count());
+  ok('years: the wrong way round is put right', (await count()) === '632 photos, 1 video', await count());
   await type('#fFrom', ''); 
   ok('years: up to', (await count()) === '620 photos', await count());
   await type('#fTo', '');
@@ -245,7 +251,7 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/p
   ok('filter: counting made no request to OneDrive', seen.length === 0, JSON.stringify(seen));
   await shot('7a-filter');
   await p.click('#filterClear');
-  ok('clear empties every choice', (await count()) === '633 photos, 1 video' && await p.inputValue('#fAlbum') === '' && await p.inputValue('#fType') === '');
+  ok('clear empties every choice', (await count()) === '634 photos, 1 video' && await p.inputValue('#fAlbum') === '' && await p.inputValue('#fType') === '');
   // results from several albums, newest first
   await pick('#fRating', '3'); await pick('#fOrder', 'new');
   await p.click('#filterShow');
