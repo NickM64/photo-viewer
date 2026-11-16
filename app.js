@@ -6,7 +6,7 @@
    The page talks only to Microsoft: the sign-in service and OneDrive (Microsoft Graph), with the single
    permission "read files".  It has no server of its own. */
 
-const BUILD = "0.3.1";                          // also in version.json and in index.html's ?v= (see CLAUDE.md)
+const BUILD = "0.3.2";                          // also in version.json and in index.html's ?v= (see CLAUDE.md)
 const VERSION = BUILD + " (stage 3)";
 const CFG = Object.assign({ clientId: "", catalogueFolder: "PhotoManager/Shared", catalogueFile: "viewer_catalogue.json.gz" },
   window.PV_CONFIG || {});
@@ -250,7 +250,9 @@ function listFor(key) {
   if (key === "filter") out = filterMatches(FILTER);
   else data.photos.forEach((p, i) => { if (key === "all" || p[col.album] === key) out.push(i); });
   const order = key === "filter" ? FILTER.order : "old";
-  const when = (i) => data.photos[i][col.date] || data.photos[i][col.date_sort] || "";
+  // A sort date has no time; "~" sorts after "T...", so on the same day a photo with only a sort date follows
+  // the photos with a Captured Date (spec 2.11.5).
+  const when = (i) => data.photos[i][col.date] || (data.photos[i][col.date_sort] ? data.photos[i][col.date_sort] + "~" : "");
   const byName = (a, b) => { const f = data.photos[a][col.file], g = data.photos[b][col.file]; return f < g ? -1 : f > g ? 1 : 0; };
   if (order === "name") out.sort(byName);
   else {
